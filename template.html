@@ -8,7 +8,7 @@
     margin:0;
     width:{{WIDTH}}px;
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
-    background:{{BG}};
+    background: transparent;
   }
   #top-block, #bottom-block{
     background:{{BG}};
@@ -34,10 +34,13 @@
   .t-action{display:flex;align-items:center;gap:8px;font-size:17px;}
   .t-action svg{width:25px;height:25px;flex-shrink:0;}
 
-  /* Rounded-corner clip masks — solid theme-bg squares with one quarter-circle
-     bite taken out, overlaid on the video's four corners in ffmpeg so the
-     straight edges appear rounded without any risky ffmpeg masking filters. */
-  .corner{width:{{CORNER_R}}px;height:{{CORNER_R}}px;background:{{BG}};}
+  /* Corner masks: Transparent background allows alpha channel preservation in Puppeteer screenshots */
+  .corner{
+    position: absolute;
+    width:{{CORNER_R}}px;
+    height:{{CORNER_R}}px;
+    background:{{BG}};
+  }
   #corner-tl{border-radius:0 0 {{CORNER_R}}px 0;}
   #corner-tr{border-radius:0 0 0 {{CORNER_R}}px;}
   #corner-bl{border-radius:0 {{CORNER_R}}px 0 0;}
