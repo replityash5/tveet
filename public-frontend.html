@@ -2,96 +2,272 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Tweet Video Generator (Server Edition)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tweet Video Generator & Live Editor</title>
 <style>
-  body{background:#0a0a0a;color:#e7e9ea;font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;padding:24px 16px 80px;}
-  h1{font-size:18px;text-align:center;margin-bottom:4px;}
-  .sub{text-align:center;color:#71767b;font-size:13px;margin-bottom:24px;}
-  label{display:block;font-size:12px;color:#71767b;margin:12px 0 6px;}
-  input, select{width:100%;background:#000;border:1px solid #2f3336;border-radius:8px;color:#e7e9ea;padding:10px 12px;font-size:14px;}
-  button{background:#1d9bf0;color:#fff;border:none;border-radius:999px;padding:12px 18px;font-weight:700;font-size:14px;cursor:pointer;width:100%;margin-top:16px;}
+  *{box-sizing:border-box;}
+  body{background:#0a0a0a;color:#e7e9ea;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px 80px;}
+  h1{font-size:20px;text-align:center;margin-bottom:4px;}
+  .sub{text-align:center;color:#71767b;font-size:13px;margin-bottom:20px;}
+  .card{background:#16181c;border:1px solid #2f3336;border-radius:16px;padding:16px;margin-bottom:20px;}
+  label{display:block;font-size:12px;color:#71767b;margin:10px 0 4px;font-weight:600;}
+  input, select, textarea{width:100%;background:#000;border:1px solid #2f3336;border-radius:8px;color:#e7e9ea;padding:10px 12px;font-size:14px;font-family:inherit;}
+  textarea{resize:vertical;min-height:70px;}
+  .row{display:flex;gap:10px;}
+  .row > div{flex:1;}
+  button{background:#1d9bf0;color:#fff;border:none;border-radius:999px;padding:12px 18px;font-weight:700;font-size:14px;cursor:pointer;width:100%;margin-top:14px;}
+  button.secondary{background:#2f3336;}
   button:disabled{opacity:.5;}
-  .status{font-size:13px;margin-top:10px;min-height:18px;}
-  .status.error{color:#f4212e;}
-  .status.ok{color:#00ba7c;}
-  video{width:100%;border-radius:12px;margin-top:16px;background:#000;}
+  
+  /* Live Tweet Preview Box */
+  .preview-box{border:1px solid #2f3336;border-radius:16px;overflow:hidden;margin:16px 0;transition:background 0.2s;}
+  .p-head{display:flex;gap:12px;align-items:center;padding:16px 16px 0;}
+  .p-avatar{width:48px;height:48px;border-radius:50%;background:#3b82f6;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:20px;object-fit:cover;}
+  .p-name{font-weight:800;font-size:15px;}
+  .p-handle{color:#71767b;font-size:14px;}
+  .p-text{font-size:16px;line-height:1.4;padding:12px 16px 8px;word-break:break-word;}
+  .p-video-sim{height:180px;background:#222;display:flex;align-items:center;justify-content:center;color:#71767b;font-size:13px;margin:0 16px;border-radius:16px;border:1px dashed #444;}
+  .p-meta{padding:12px 16px;font-size:13px;color:#71767b;border-bottom:1px solid #2f3336;}
+  .p-stats{padding:10px 16px;display:flex;justify-content:space-between;color:#71767b;font-size:13px;}
+
+  /* Progress bar styling */
+  .progress-wrap{display:none;margin-top:16px;}
+  .progress-bar-bg{background:#2f3336;border-radius:999px;height:10px;overflow:hidden;}
+  .progress-bar-fill{background:#1d9bf0;height:100%;width:0%;transition:width 0.3s;}
+  .status-text{font-size:13px;margin-top:8px;text-align:center;}
+  .status-text.error{color:#f4212e;}
+  .status-text.ok{color:#00ba7c;}
+  
+  video{width:100%;border-radius:12px;margin-top:16px;background:#000;display:none;}
+  .download-btn{display:none;background:#00ba7c;text-decoration:none;text-align:center;line-height:44px;border-radius:999px;font-weight:700;color:#fff;margin-top:10px;}
 </style>
 </head>
 <body>
 
-<h1>Tweet Video Generator — Server Edition</h1>
-<p class="sub">Server-side render. No screen recording, no real-time wait.</p>
+<h1>Tweet Video Generator</h1>
+<p class="sub">Server-side composite renderer with live editor</p>
 
-<label>Server URL (from your Render deployment)</label>
-<input id="apiBase" placeholder="https://your-service.onrender.com" value="">
+<div class="card">
+  <label>Tweet / X Post URL</label>
+  <div class="row">
+    <input id="tweetUrl" placeholder="https://x.com/username/status/1234567890">
+    <button id="fetchBtn" class="secondary" style="width:110px;margin:0;">Fetch</button>
+  </div>
 
-<label>Tweet / X post URL</label>
-<input id="tweetUrl" placeholder="https://x.com/username/status/1234567890">
+  <label>Theme</label>
+  <select id="theme">
+    <option value="dark">Lights out (Black)</option>
+    <option value="dim">Dim</option>
+    <option value="light">Default (White)</option>
+  </select>
 
-<label>Theme</label>
-<select id="theme">
-  <option value="dark">Lights out (black)</option>
-  <option value="dim">Dim</option>
-  <option value="light">Default (white)</option>
-</select>
+  <!-- Live HTML Preview -->
+  <label>Live Card Preview</label>
+  <div class="preview-box" id="previewBox">
+    <div class="p-head">
+      <div class="p-avatar" id="pvAvatar">?</div>
+      <div>
+        <div class="p-name" id="pvName">Display Name</div>
+        <div class="p-handle" id="pvHandle">@handle</div>
+      </div>
+    </div>
+    <div class="p-text" id="pvText">Tweet text content will appear here...</div>
+    <div class="p-video-sim">[ Video Stream Container ]</div>
+    <div class="p-meta" id="pvMeta">12:00 PM · Jan 1, 2026</div>
+    <div class="p-stats">
+      <span id="pvReplies">💬 0</span>
+      <span>🔁 0</span>
+      <span id="pvLikes">❤️ 0</span>
+    </div>
+  </div>
 
-<button id="genBtn">Generate video</button>
-<div class="status" id="status"></div>
-<video id="preview" controls style="display:none;"></video>
+  <!-- Editable Overrides -->
+  <div class="row">
+    <div>
+      <label>Display Name</label>
+      <input id="editName" placeholder="Name">
+    </div>
+    <div>
+      <label>Handle</label>
+      <input id="editHandle" placeholder="handle">
+    </div>
+  </div>
+
+  <label>Tweet Text</label>
+  <textarea id="editText" placeholder="Edit tweet text..."></textarea>
+
+  <div class="row">
+    <div>
+      <label>Likes Count</label>
+      <input id="editLikes" type="number" placeholder="0">
+    </div>
+    <div>
+      <label>Replies Count</label>
+      <input id="editReplies" type="number" placeholder="0">
+    </div>
+  </div>
+
+  <button id="genBtn">Generate Video</button>
+
+  <!-- Progress Bar Container -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+    <div class="status-text" id="statusText">Preparing server...</div>
+  </div>
+
+  <!-- Result Container -->
+  <video id="videoPreview" controls></video>
+  <a id="downloadBtn" class="download-btn" target="_blank">Download MP4 Video</a>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
 
-// If this page is being served from the render server itself (recommended),
-// auto-fill the Server URL field so there's nothing to paste.
-if (location.protocol.startsWith('http')) {
-  $('apiBase').value = location.origin;
+let fetchedTweetData = null;
+
+// Real-time Preview Sync
+function updatePreview() {
+  const theme = $('theme').value;
+  const box = $('previewBox');
+  
+  if (theme === 'dark') {
+    box.style.background = '#000000';
+    box.style.color = '#e7e9ea';
+  } else if (theme === 'dim') {
+    box.style.background = '#15202b';
+    box.style.color = '#f7f9f9';
+  } else {
+    box.style.background = '#ffffff';
+    box.style.color = '#0f1419';
+  }
+
+  $('pvName').textContent = $('editName').value || 'Display Name';
+  $('pvHandle').textContent = '@' + ($('editHandle').value.replace(/^@/, '') || 'handle');
+  $('pvText').textContent = $('editText').value || 'Tweet text content will appear here...';
+  
+  const initial = ($('editName').value || '?').trim().charAt(0).toUpperCase();
+  $('pvAvatar').textContent = initial;
+
+  $('pvLikes').textContent = '❤️ ' + ($('editLikes').value || '0');
+  $('pvReplies').textContent = '💬 ' + ($('editReplies').value || '0');
 }
 
-$('genBtn').addEventListener('click', async () => {
-  const base = $('apiBase').value.trim().replace(/\/$/, '');
-  const tweetUrl = $('tweetUrl').value.trim();
-  const theme = $('theme').value;
-  const statusEl = $('status');
-  const btn = $('genBtn');
-
-  if(!base){ statusEl.textContent = 'Enter your deployed server URL first.'; statusEl.className='status error'; return; }
-  if(!tweetUrl){ statusEl.textContent = 'Paste a tweet URL first.'; statusEl.className='status error'; return; }
-
-  btn.disabled = true;
-  statusEl.textContent = 'Rendering on server… (a 20-min video typically takes a couple of minutes, not 20)';
-  statusEl.className = 'status';
-  $('preview').style.display = 'none';
-
-  try{
-    const res = await fetch(`${base}/api/render-video`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ tweetUrl, theme, width: 1080 }),
-    });
-    if(!res.ok){
-      const err = await res.json().catch(() => ({error: 'HTTP ' + res.status}));
-      throw new Error(err.error || 'Server error');
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    $('preview').src = url;
-    $('preview').style.display = 'block';
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'tweet-video.mp4';
-    a.click();
-
-    statusEl.textContent = 'Done — downloaded tweet-video.mp4';
-    statusEl.className = 'status ok';
-  }catch(err){
-    console.error(err);
-    statusEl.textContent = 'Failed: ' + err.message;
-    statusEl.className = 'status error';
-  }
-  btn.disabled = false;
+['editName', 'editHandle', 'editText', 'editLikes', 'editReplies', 'theme'].forEach(id => {
+  $(id).addEventListener('input', updatePreview);
+  $(id).addEventListener('change', updatePreview);
 });
+
+// Fetch Tweet JSON
+$('fetchBtn').addEventListener('click', async () => {
+  const tweetUrl = $('tweetUrl').value.trim();
+  if(!tweetUrl) return alert('Please enter a tweet URL first.');
+
+  $('fetchBtn').disabled = true;
+  $('fetchBtn').textContent = 'Fetching...';
+
+  try {
+    const res = await fetch('/api/tweet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ url: tweetUrl })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Failed to fetch tweet');
+
+    fetchedTweetData = data;
+    $('editName').value = data.user?.name || '';
+    $('editHandle').value = data.user?.screen_name || '';
+    $('editText').value = data.text || data.full_text || '';
+    $('editLikes').value = data.favorite_count || 0;
+    $('editReplies').value = data.conversation_count || 0;
+
+    updatePreview();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  } finally {
+    $('fetchBtn').disabled = false;
+    $('fetchBtn').textContent = 'Fetch';
+  }
+});
+
+// Render Video with Progress Tracking
+$('genBtn').addEventListener('click', async () => {
+  const tweetUrl = $('tweetUrl').value.trim();
+  if(!tweetUrl) return alert('Please enter a tweet URL.');
+
+  const theme = $('theme').value;
+  const overrides = {
+    name: $('editName').value,
+    handle: $('editHandle').value,
+    text: $('editText').value,
+    likes: parseInt($('editLikes').value) || 0,
+    replies: parseInt($('editReplies').value) || 0
+  };
+
+  $('genBtn').disabled = true;
+  $('progressWrap').style.display = 'block';
+  $('videoPreview').style.display = 'none';
+  $('downloadBtn').style.display = 'none';
+  $('statusText').className = 'status-text';
+  $('statusText').textContent = 'Starting video generation...';
+  $('progressFill').style.width = '0%';
+
+  try {
+    // 1. Start Job
+    const res = await fetch('/api/render-video/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ tweetUrl, theme, overrides })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Failed to start rendering');
+
+    const jobId = data.jobId;
+
+    // 2. Stream Live Progress via EventSource SSE
+    const evtSource = new EventSource(`/api/render-video/progress/${jobId}`);
+
+    evtSource.onmessage = (event) => {
+      const job = JSON.parse(event.data);
+      
+      $('progressFill').style.width = job.progress + '%';
+      $('statusText').textContent = `Rendering video on server... ${job.progress}%`;
+
+      if (job.status === 'done') {
+        evtSource.close();
+        $('statusText').textContent = 'Rendering complete!';
+        $('statusText').className = 'status-text ok';
+        $('genBtn').disabled = false;
+
+        // Display inline player & download button
+        const downloadUrl = `/api/render-video/download/${jobId}`;
+        $('videoPreview').src = downloadUrl;
+        $('videoPreview').style.display = 'block';
+        $('downloadBtn').href = downloadUrl;
+        $('downloadBtn').style.display = 'block';
+      } else if (job.status === 'error') {
+        evtSource.close();
+        $('statusText').textContent = 'Error: ' + job.error;
+        $('statusText').className = 'status-text error';
+        $('genBtn').disabled = false;
+      }
+    };
+
+    evtSource.onerror = () => {
+      evtSource.close();
+      $('statusText').textContent = 'Lost connection to server progress updates.';
+      $('statusText').className = 'status-text error';
+      $('genBtn').disabled = false;
+    };
+
+  } catch(err) {
+    $('statusText').textContent = 'Failed: ' + err.message;
+    $('statusText').className = 'status-text error';
+    $('genBtn').disabled = false;
+  }
+});
+
+updatePreview();
 </script>
 </body>
 </html>
