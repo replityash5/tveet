@@ -1,0 +1,44 @@
+name: Unpack uploaded zip
+
+   on:
+     push:
+       paths:
+         - '*.zip'
+     workflow_dispatch:
+
+   permissions:
+     contents: write
+
+   jobs:
+     unpack:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+           with:
+             fetch-depth: 0
+
+         - name: Unzip and restructure
+           run: |
+             set -e
+             ZIPFILE=$(ls *.zip 2>/dev/null | head -n1 || true)
+             if [ -z "$ZIPFILE" ]; then
+               echo "No .zip file found at repo root — nothing to do."
+               exit 0
+             fi
+             unzip -o "$ZIPFILE" -d .
+             TOPDIR=$(unzip -Z1 "$ZIPFILE" | awk -F/ '{print $1}' | sort -u)
+             TOPDIR_COUNT=$(echo "$TOPDIR" | wc -l)
+             if [ "$TOPDIR_COUNT" -eq 1 ] && [ -d "$TOPDIR" ]; then
+               shopt -s dotglob
+               mv "$TOPDIR"/* .
+               rmdir "$TOPDIR"
+             fi
+             rm "$ZIPFILE"
+
+         - name: Commit and push
+           run: |
+             git config user.name "github-actions[bot]"
+             git config user.email "github-actions[bot]@users.noreply.github.com"
+             git add -A
+             git commit -m "Unpack zip and restructure repo [skip ci]" || echo "Nothing to commit"
+             git push
