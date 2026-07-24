@@ -12,15 +12,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve the frontend directly from this server (same-origin — avoids
-// file:// / content:// CORS and network-request restrictions in mobile browsers).
+// Serving frontend directly from the server
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public-frontend.html'));
 });
 
-const CORNER_R = 28; // px radius for the rounded video corners
+const CORNER_R = 28;
 
-// ---- Tweet fetching (server-side = no CORS problems at all) ----
+// In-Memory Job Store for progress tracking
+const jobs = new Map();
+
+// Periodic cleanup of stale jobs (>30 minutes old)
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of jobs.entries()) {
+    if (now - job.createdAt > 30 * 60 * 1000) {
+      if (job.tmpDir && fs.existsSync(job.tmpDir)) {
+        fs.rmSync(job.tmpDir, { recursive: true, force: true });
+      }
+      jobs.delete(id);
+    }
+  }
+}, 5 * 60 * 1000);
+
 function getToken(id) {
   return ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '');
 }
@@ -43,7 +57,7 @@ async function fetchTweetData(url) {
   return data;
 }
 
-function getBestVideoUrl(data) {
+function getBestVideoDetails(data) {
   const media = data.mediaDetails || data.photos;
   if (!media || !media.length) return null;
   const m = media[0];
@@ -51,7 +65,11 @@ function getBestVideoUrl(data) {
   const variants = (m.video_info && m.video_info.variants) || [];
   const mp4s = variants.filter(v => v.content_type === 'video/mp4');
   mp4s.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-  return mp4s[0] ? mp4s[0].url : null;
+  
+  return {
+    url: mp4s[0] ? mp4s[0].url : null,
+    durationMs: m.video_info?.duration_millis || 0
+  };
 }
 
 function escapeHtml(s) {
@@ -61,7 +79,6 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;');
 }
 
-// Twitter-style abbreviated counts: 2302 -> "2.3K", 43200 -> "43.2K"
 function formatCompact(n) {
   n = Number(n) || 0;
   if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1).replace(/\.0$/, '') + 'M';
@@ -75,27 +92,24 @@ const THEMES = {
   light: { bg: '#ffffff', text: '#0f1419', sub: '#536471', border: '#eff3f4' },
 };
 
-// ---- Render the overlay images (top text block, bottom stats block, and
-// 4 tiny rounded-corner masks) with headless Chrome ----
-async function renderOverlays(tweet, theme, outWidth) {
+async function renderOverlays(tweet, theme, outWidth, overrides = {}) {
   const t = THEMES[theme] || THEMES.dark;
   const templatePath = path.join(__dirname, 'template.html');
   let html = fs.readFileSync(templatePath, 'utf8');
 
-  const name = escapeHtml(tweet.user?.name);
-  const handle = escapeHtml(tweet.user?.screen_name);
+  const name = escapeHtml(overrides.name || tweet.user?.name);
+  const handle = escapeHtml(overrides.handle || tweet.user?.screen_name);
   const avatar = tweet.user?.profile_image_url_https || '';
-  const initial = (tweet.user?.name || '?').trim().charAt(0).toUpperCase() || '?';
+  const initial = ((overrides.name || tweet.user?.name || '?').trim().charAt(0).toUpperCase()) || '?';
   const verified = !!(tweet.user?.is_blue_verified || tweet.user?.verified);
-  const text = escapeHtml(tweet.text || tweet.full_text).replace(/\n/g, '<br>');
+  const text = escapeHtml(overrides.text || tweet.text || tweet.full_text).replace(/\n/g, '<br>');
   const created = tweet.created_at ? new Date(tweet.created_at) : new Date();
   const time = created.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const date = created.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-  const likes = formatCompact(tweet.favorite_count ?? 0);
-  const replies = formatCompact(tweet.conversation_count ?? 0);
+  
+  const likes = overrides.likes !== undefined ? formatCompact(overrides.likes) : formatCompact(tweet.favorite_count ?? 0);
+  const replies = overrides.replies !== undefined ? formatCompact(overrides.replies) : formatCompact(tweet.conversation_count ?? 0);
 
-  // View counts aren't reliably exposed by the syndication endpoint — show
-  // them only if present, rather than guessing or faking a number.
   const viewCount = tweet.view_count ?? tweet.ext_views?.r?.ok?.count ?? null;
   const viewsRow = viewCount ? ` &middot; <b>${formatCompact(viewCount)}</b> Views` : '';
 
@@ -130,20 +144,18 @@ async function renderOverlays(tweet, theme, outWidth) {
 
     const topEl = await page.$('#top-block');
     const topBox = await topEl.boundingBox();
-    await topEl.screenshot({ path: topPath });
+    await topEl.screenshot({ path: topPath, omitBackground: true });
+
     const botEl = await page.$('#bottom-block');
     const botBox = await botEl.boundingBox();
-    await botEl.screenshot({ path: botPath });
+    await botEl.screenshot({ path: botPath, omitBackground: true });
 
-    await (await page.$('#corner-tl')).screenshot({ path: ctlPath });
-    await (await page.$('#corner-tr')).screenshot({ path: ctrPath });
-    await (await page.$('#corner-bl')).screenshot({ path: cblPath });
-    await (await page.$('#corner-br')).screenshot({ path: cbrPath });
+    // OmitBackground preserves alpha channels for rounded corner cutouts
+    await (await page.$('#corner-tl')).screenshot({ path: ctlPath, omitBackground: true });
+    await (await page.$('#corner-tr')).screenshot({ path: ctrPath, omitBackground: true });
+    await (await page.$('#corner-bl')).screenshot({ path: cblPath, omitBackground: true });
+    await (await page.$('#corner-br')).screenshot({ path: cbrPath, omitBackground: true });
 
-    // boundingBox() returns CSS pixels (not multiplied by deviceScaleFactor).
-    // Since the viewport width equals outWidth, scaling the (2x-resolution)
-    // screenshot back down to outWidth naturally lands on these CSS heights.
-    // Round to even numbers since libx264 requires even output dimensions.
     const evenRound = (n) => Math.max(2, Math.round(n / 2) * 2);
     const topHeight = evenRound(topBox.height);
     const botHeight = evenRound(botBox.height);
@@ -157,10 +169,25 @@ async function renderOverlays(tweet, theme, outWidth) {
   }
 }
 
-function runFfmpeg(args) {
+function runFfmpegWithProgress(args, totalDurationMs, onProgress) {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', args);
     let stderr = '';
+
+    proc.stdout.on('data', data => {
+      const str = data.toString();
+      const timeMatch = str.match(/out_time=(\d+):(\d+):(\d+\.\d+)/);
+      if (timeMatch && totalDurationMs > 0) {
+        const hours = parseFloat(timeMatch[1]);
+        const mins = parseFloat(timeMatch[2]);
+        const secs = parseFloat(timeMatch[3]);
+        const currentSecs = hours * 3600 + mins * 60 + secs;
+        const totalSecs = totalDurationMs / 1000;
+        const pct = Math.min(99, Math.max(1, Math.round((currentSecs / totalSecs) * 100)));
+        onProgress(pct);
+      }
+    });
+
     proc.stderr.on('data', d => { stderr += d.toString(); });
     proc.on('close', code => {
       if (code === 0) resolve();
@@ -181,64 +208,138 @@ app.post('/api/tweet', async (req, res) => {
   }
 });
 
-app.post('/api/render-video', async (req, res) => {
-  const { tweetUrl, theme = 'dark', width = 1080 } = req.body;
-  let tmp;
-  try {
-    const tweet = await fetchTweetData(tweetUrl);
-    const videoUrl = getBestVideoUrl(tweet);
-    if (!videoUrl) {
-      return res.status(400).json({ error: 'This tweet has no video to composite.' });
+// Start background rendering job
+app.post('/api/render-video/start', async (req, res) => {
+  const { tweetUrl, theme = 'dark', width = 1080, overrides = {} } = req.body;
+  const jobId = Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+
+  const job = {
+    id: jobId,
+    status: 'rendering',
+    progress: 5,
+    outPath: null,
+    tmpDir: null,
+    error: null,
+    createdAt: Date.now(),
+    clients: []
+  };
+  jobs.set(jobId, job);
+
+  // Return jobId immediately
+  res.json({ jobId });
+
+  // Run rendering process asynchronously
+  (async () => {
+    try {
+      const tweet = await fetchTweetData(tweetUrl);
+      const videoDetails = getBestVideoDetails(tweet);
+      if (!videoDetails || !videoDetails.url) {
+        throw new Error('This tweet has no video to composite.');
+      }
+
+      job.progress = 15;
+      notifyClients(job);
+
+      const overlays = await renderOverlays(tweet, theme, width, overrides);
+      job.tmpDir = overlays.tmp;
+      const outPath = path.join(overlays.tmp, 'out.mp4');
+      const { topHeight, botHeight, bgColor } = overlays;
+
+      job.progress = 25;
+      notifyClients(job);
+
+      const args = [
+        '-y',
+        '-progress', 'pipe:1',
+        '-i', videoDetails.url,
+        '-loop', '1', '-i', overlays.topPath,
+        '-loop', '1', '-i', overlays.botPath,
+        '-loop', '1', '-i', overlays.ctlPath,
+        '-loop', '1', '-i', overlays.ctrPath,
+        '-loop', '1', '-i', overlays.cblPath,
+        '-loop', '1', '-i', overlays.cbrPath,
+        '-filter_complex',
+        `[0:v]scale=${width}:-2,fps=30[vid];` +
+        `[1:v]scale=${width}:${topHeight},fps=30[top];` +
+        `[2:v]scale=${width}:${botHeight},fps=30[bot];` +
+        `[3:v]scale=${CORNER_R}:${CORNER_R}[ctl];` +
+        `[4:v]scale=${CORNER_R}:${CORNER_R}[ctr];` +
+        `[5:v]scale=${CORNER_R}:${CORNER_R}[cbl];` +
+        `[6:v]scale=${CORNER_R}:${CORNER_R}[cbr];` +
+        `[vid]pad=${width}:ih+${topHeight}+${botHeight}:0:${topHeight}:color=${bgColor}[padded];` +
+        `[padded][top]overlay=0:0[s1];` +
+        `[s1][bot]overlay=0:main_h-overlay_h[s2];` +
+        `[s2][ctl]overlay=0:${topHeight}[s3];` +
+        `[s3][ctr]overlay=W-w:${topHeight}[s4];` +
+        `[s4][cbl]overlay=0:H-${botHeight}-h[s5];` +
+        `[s5][cbr]overlay=W-w:H-${botHeight}-h[outv]`,
+        '-map', '[outv]',
+        '-map', '0:a?',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-c:a', 'aac', '-pix_fmt', 'yuv420p',
+        '-threads', '1',
+        '-shortest',
+        outPath,
+      ];
+
+      await runFfmpegWithProgress(args, videoDetails.durationMs, (pct) => {
+        // Scaling progress between 25% and 98%
+        job.progress = Math.min(98, 25 + Math.round((pct * 73) / 100));
+        notifyClients(job);
+      });
+
+      job.outPath = outPath;
+      job.status = 'done';
+      job.progress = 100;
+      notifyClients(job);
+    } catch (err) {
+      console.error(`Job ${jobId} failed:`, err);
+      job.status = 'error';
+      job.error = err.message;
+      notifyClients(job);
     }
+  })();
+});
 
-    const overlays = await renderOverlays(tweet, theme, width);
-    tmp = overlays.tmp;
-    const outPath = path.join(tmp, 'out.mp4');
-    const { topHeight, botHeight, bgColor } = overlays;
+// Helper function to push updates via SSE
+function notifyClients(job) {
+  const data = JSON.stringify({ status: job.status, progress: job.progress, error: job.error });
+  job.clients.forEach(res => res.write(`data: ${data}\n\n`));
+}
 
-    const args = [
-      '-y',
-      '-i', videoUrl,
-      '-loop', '1', '-i', overlays.topPath,
-      '-loop', '1', '-i', overlays.botPath,
-      '-loop', '1', '-i', overlays.ctlPath,
-      '-loop', '1', '-i', overlays.ctrPath,
-      '-loop', '1', '-i', overlays.cblPath,
-      '-loop', '1', '-i', overlays.cbrPath,
-      '-filter_complex',
-      `[0:v]scale=${width}:-2,fps=30[vid];` +
-      `[1:v]scale=${width}:${topHeight},fps=30[top];` +
-      `[2:v]scale=${width}:${botHeight},fps=30[bot];` +
-      `[3:v]scale=${CORNER_R}:${CORNER_R}[ctl];` +
-      `[4:v]scale=${CORNER_R}:${CORNER_R}[ctr];` +
-      `[5:v]scale=${CORNER_R}:${CORNER_R}[cbl];` +
-      `[6:v]scale=${CORNER_R}:${CORNER_R}[cbr];` +
-      `[vid]pad=${width}:ih+${topHeight}+${botHeight}:0:${topHeight}:color=${bgColor}[padded];` +
-      `[padded][top]overlay=0:0[s1];` +
-      `[s1][bot]overlay=0:main_h-overlay_h[s2];` +
-      `[s2][ctl]overlay=0:${topHeight}[s3];` +
-      `[s3][ctr]overlay=W-w:${topHeight}[s4];` +
-      `[s4][cbl]overlay=0:H-${botHeight}-h[s5];` +
-      `[s5][cbr]overlay=W-w:H-${botHeight}-h[outv]`,
-      '-map', '[outv]',
-      '-map', '0:a?',
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-      '-c:a', 'aac', '-pix_fmt', 'yuv420p',
-      '-threads', '1',
-      '-shortest',
-      outPath,
-    ];
-    await runFfmpeg(args);
+// Server-Sent Events (SSE) Progress Route
+app.get('/api/render-video/progress/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = jobs.get(jobId);
 
-    res.download(outPath, 'tweet-video.mp4', (err) => {
-      fs.rm(tmp, { recursive: true, force: true }, () => {});
-      if (err) console.error('Download stream error:', err);
-    });
-  } catch (err) {
-    if (tmp) fs.rm(tmp, { recursive: true, force: true }, () => {});
-    console.error(err);
-    res.status(500).json({ error: err.message });
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
   }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  // Send current status immediately upon connection
+  res.write(`data: ${JSON.stringify({ status: job.status, progress: job.progress, error: job.error })}\n\n`);
+
+  job.clients.push(res);
+
+  req.on('close', () => {
+    job.clients = job.clients.filter(c => c !== res);
+  });
+});
+
+// File Download Endpoint
+app.get('/api/render-video/download/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = jobs.get(jobId);
+
+  if (!job || job.status !== 'done' || !job.outPath || !fs.existsSync(job.outPath)) {
+    return res.status(404).send('Video not found or job expired.');
+  }
+
+  res.download(job.outPath, 'tweet-video.mp4');
 });
 
 const PORT = process.env.PORT || 3000;
