@@ -16,8 +16,9 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public-frontend.html'));
 });
 
-// Increased to 40px for proper proportion on 1080p wide videos
-const CORNER_R = 40;
+// Layout constants for 1080p canvas width
+const CORNER_R = 32; // Radius for the video corners
+const SIDE_PAD = 30; // Left & Right padding matching Twitter card margins
 
 const jobs = new Map();
 
@@ -242,6 +243,9 @@ app.post('/api/render-video/start', async (req, res) => {
       job.progress = 25;
       notifyClients(job);
 
+      // Width of video inset after subtracting left/right side padding
+      const vidWidth = width - (SIDE_PAD * 2);
+
       const args = [
         '-y',
         '-progress', 'pipe:1',
@@ -253,20 +257,20 @@ app.post('/api/render-video/start', async (req, res) => {
         '-loop', '1', '-i', overlays.cblPath,
         '-loop', '1', '-i', overlays.cbrPath,
         '-filter_complex',
-        `[0:v]scale=${width}:-2,fps=30[vid];` +
+        `[0:v]scale=${vidWidth}:-2,fps=30[vid];` +
         `[1:v]scale=${width}:${topHeight},fps=30[top];` +
         `[2:v]scale=${width}:${botHeight},fps=30[bot];` +
         `[3:v]scale=${CORNER_R}:${CORNER_R}[ctl];` +
         `[4:v]scale=${CORNER_R}:${CORNER_R}[ctr];` +
         `[5:v]scale=${CORNER_R}:${CORNER_R}[cbl];` +
         `[6:v]scale=${CORNER_R}:${CORNER_R}[cbr];` +
-        `[vid]pad=${width}:ih+${topHeight}+${botHeight}:0:${topHeight}:color=${bgColor}[padded];` +
+        `[vid]pad=${width}:ih+${topHeight}+${botHeight}:${SIDE_PAD}:${topHeight}:color=${bgColor}[padded];` +
         `[padded][top]overlay=0:0[s1];` +
         `[s1][bot]overlay=0:main_h-overlay_h[s2];` +
-        `[s2][ctl]overlay=0:${topHeight}[s3];` +
-        `[s3][ctr]overlay=main_w-overlay_w:${topHeight}[s4];` +
-        `[s4][cbl]overlay=0:main_h-${botHeight}-overlay_h[s5];` +
-        `[s5][cbr]overlay=main_w-overlay_w:main_h-${botHeight}-overlay_h[outv]`,
+        `[s2][ctl]overlay=${SIDE_PAD}:${topHeight}[s3];` +
+        `[s3][ctr]overlay=${width - SIDE_PAD - CORNER_R}:${topHeight}[s4];` +
+        `[s4][cbl]overlay=${SIDE_PAD}:main_h-${botHeight}-${CORNER_R}[s5];` +
+        `[s5][cbr]overlay=${width - SIDE_PAD - CORNER_R}:main_h-${botHeight}-${CORNER_R}[outv]`,
         '-map', '[outv]',
         '-map', '0:a?',
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
