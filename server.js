@@ -16,9 +16,9 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public-frontend.html'));
 });
 
-// Optimized 720p layout scale
-const CORNER_R = 24;
-const SIDE_PAD = 20;
+// Optimized scale parameters for fast rendering on Render free tier
+const CORNER_R = 20;
+const SIDE_PAD = 16;
 
 const jobs = new Map();
 
@@ -54,6 +54,14 @@ async function fetchTweetData(url) {
     throw new Error('Tweet unavailable (deleted, protected, or age-restricted)');
   }
   return data;
+}
+
+function getCleanTweetText(tweet) {
+  // Check note_tweet first for full long-tweet text
+  let text = tweet.note_tweet?.text || tweet.text || tweet.full_text || '';
+  // Strip trailing twitter media shortlinks
+  text = text.replace(/https:\/\/t\.co\/\w+$/g, '').trim();
+  return text;
 }
 
 function getBestVideoDetails(data) {
@@ -101,7 +109,10 @@ async function renderOverlays(tweet, theme, outWidth, overrides = {}) {
   const avatar = tweet.user?.profile_image_url_https || '';
   const initial = ((overrides.name || tweet.user?.name || '?').trim().charAt(0).toUpperCase()) || '?';
   const verified = !!(tweet.user?.is_blue_verified || tweet.user?.verified);
-  const text = escapeHtml(overrides.text || tweet.text || tweet.full_text).replace(/\n/g, '<br>');
+  
+  const rawText = overrides.text || getCleanTweetText(tweet);
+  const text = escapeHtml(rawText).replace(/\n/g, '<br>');
+  
   const created = tweet.created_at ? new Date(tweet.created_at) : new Date();
   const time = created.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const date = created.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
@@ -198,8 +209,8 @@ app.post('/api/tweet', async (req, res) => {
 });
 
 app.post('/api/render-video/start', async (req, res) => {
-  // Default to 720p width for ultra-fast encoding
-  const { tweetUrl, theme = 'dark', width = 720, overrides = {} } = req.body;
+  // Default to 600px width for max encoding speed on Render's 0.1 CPU core
+  const { tweetUrl, theme = 'dark', width = 600, overrides = {} } = req.body;
   const jobId = Date.now() + '_' + Math.random().toString(36).substring(2, 8);
 
   const job = {
@@ -239,7 +250,9 @@ app.post('/api/render-video/start', async (req, res) => {
       const topContentHeight = topHeight - CORNER_R;
       const botContentHeight = botHeight - CORNER_R;
 
-      // Streamlining to 3 inputs & 2 overlays + direct audio stream copy
+      // Filter graph fixes:
+      // 1. 'setsar=1' normalizes video pixel aspect ratio (prevents squishing)
+      // 2. 'eval=init' evaluates overlay positions ONCE instead of on every frame
       const args = [
         '-y',
         '-progress', 'pipe:1',
@@ -247,16 +260,16 @@ app.post('/api/render-video/start', async (req, res) => {
         '-loop', '1', '-i', overlays.topPath,
         '-loop', '1', '-i', overlays.botPath,
         '-filter_complex',
-        `[0:v]scale=${vidWidth}:-2[vid];` +
+        `[0:v]setsar=1,scale=${vidWidth}:-2[vid];` +
         `[vid]pad=${width}:ih+${topContentHeight}+${botContentHeight}:${SIDE_PAD}:${topContentHeight}:color=${bgColor}[padded];` +
-        `[padded][1:v]overlay=0:0[s1];` +
-        `[s1][2:v]overlay=0:main_h-overlay_h[outv]`,
+        `[padded][1:v]overlay=0:0:eval=init[s1];` +
+        `[s1][2:v]overlay=0:main_h-overlay_h:eval=init[outv]`,
         '-map', '[outv]',
         '-map', '0:a?',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
-        '-crf', '26',
+        '-crf', '28',
         '-c:a', 'copy',
         '-threads', '0',
         '-shortest',
