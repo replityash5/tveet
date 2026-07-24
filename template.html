@@ -34,17 +34,18 @@
   .t-action{display:flex;align-items:center;gap:8px;font-size:17px;}
   .t-action svg{width:25px;height:25px;flex-shrink:0;}
 
-  /* Corner masks: Transparent background allows alpha channel preservation in Puppeteer screenshots */
+  /* Corner Box Container */
   .corner{
-    position: absolute;
+    display: block;
     width:{{CORNER_R}}px;
     height:{{CORNER_R}}px;
-    background:{{BG}};
+    line-height: 0;
   }
-  #corner-tl{border-radius:0 0 {{CORNER_R}}px 0;}
-  #corner-tr{border-radius:0 0 0 {{CORNER_R}}px;}
-  #corner-bl{border-radius:0 {{CORNER_R}}px 0 0;}
-  #corner-br{border-radius:{{CORNER_R}}px 0 0 0;}
+  .corner svg{
+    display: block;
+    width:{{CORNER_R}}px;
+    height:{{CORNER_R}}px;
+  }
 </style>
 </head>
 <body>
@@ -88,10 +89,27 @@
   </div>
 </div>
 
-<div id="corner-tl" class="corner"></div>
-<div id="corner-tr" class="corner"></div>
-<div id="corner-bl" class="corner"></div>
-<div id="corner-br" class="corner"></div>
+<!-- Precision Vector SVG Corner Masks -->
+<div id="corner-tl" class="corner">
+  <svg width="{{CORNER_R}}" height="{{CORNER_R}}" viewBox="0 0 {{CORNER_R}} {{CORNER_R}}">
+    <path d="M 0 0 L {{CORNER_R}} 0 A {{CORNER_R}} {{CORNER_R}} 0 0 0 0 {{CORNER_R}} Z" fill="{{BG}}"/>
+  </svg>
+</div>
+<div id="corner-tr" class="corner">
+  <svg width="{{CORNER_R}}" height="{{CORNER_R}}" viewBox="0 0 {{CORNER_R}} {{CORNER_R}}">
+    <path d="M {{CORNER_R}} 0 L 0 0 A {{CORNER_R}} {{CORNER_R}} 0 0 0 {{CORNER_R}} {{CORNER_R}} Z" fill="{{BG}}"/>
+  </svg>
+</div>
+<div id="corner-bl" class="corner">
+  <svg width="{{CORNER_R}}" height="{{CORNER_R}}" viewBox="0 0 {{CORNER_R}} {{CORNER_R}}">
+    <path d="M 0 {{CORNER_R}} L 0 0 A {{CORNER_R}} {{CORNER_R}} 0 0 0 {{CORNER_R}} {{CORNER_R}} Z" fill="{{BG}}"/>
+  </svg>
+</div>
+<div id="corner-br" class="corner">
+  <svg width="{{CORNER_R}}" height="{{CORNER_R}}" viewBox="0 0 {{CORNER_R}} {{CORNER_R}}">
+    <path d="M {{CORNER_R}} {{CORNER_R}} L {{CORNER_R}} 0 A {{CORNER_R}} {{CORNER_R}} 0 0 0 0 {{CORNER_R}} Z" fill="{{BG}}"/>
+  </svg>
+</div>
 
 </body>
 </html>
