@@ -16,9 +16,9 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public-frontend.html'));
 });
 
-// Layout constants for 1080p canvas width
-const CORNER_R = 32; // Radius for the video corners
-const SIDE_PAD = 30; // Left & Right padding matching Twitter card margins
+// Optimized 720p layout scale
+const CORNER_R = 24;
+const SIDE_PAD = 20;
 
 const jobs = new Map();
 
@@ -118,7 +118,7 @@ async function renderOverlays(tweet, theme, outWidth, overrides = {}) {
     '{{VERIFIED_DISPLAY}}': verified ? 'inline' : 'none',
     '{{TWEET_TEXT}}': text, '{{TIME}}': time, '{{DATE}}': date,
     '{{LIKES}}': likes, '{{REPLIES}}': replies, '{{VIEWS_ROW}}': viewsRow,
-    '{{WIDTH}}': String(outWidth), '{{CORNER_R}}': String(CORNER_R),
+    '{{WIDTH}}': String(outWidth), '{{CORNER_R}}': String(CORNER_R), '{{SIDE_PAD}}': String(SIDE_PAD)
   };
   for (const [k, v] of Object.entries(fill)) {
     html = html.split(k).join(v);
@@ -136,10 +136,6 @@ async function renderOverlays(tweet, theme, outWidth, overrides = {}) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-'));
     const topPath = path.join(tmp, 'top.png');
     const botPath = path.join(tmp, 'bot.png');
-    const ctlPath = path.join(tmp, 'ctl.png');
-    const ctrPath = path.join(tmp, 'ctr.png');
-    const cblPath = path.join(tmp, 'cbl.png');
-    const cbrPath = path.join(tmp, 'cbr.png');
 
     const topEl = await page.$('#top-block');
     const topBox = await topEl.boundingBox();
@@ -149,17 +145,12 @@ async function renderOverlays(tweet, theme, outWidth, overrides = {}) {
     const botBox = await botEl.boundingBox();
     await botEl.screenshot({ path: botPath, omitBackground: true });
 
-    await (await page.$('#corner-tl')).screenshot({ path: ctlPath, omitBackground: true });
-    await (await page.$('#corner-tr')).screenshot({ path: ctrPath, omitBackground: true });
-    await (await page.$('#corner-bl')).screenshot({ path: cblPath, omitBackground: true });
-    await (await page.$('#corner-br')).screenshot({ path: cbrPath, omitBackground: true });
-
     const evenRound = (n) => Math.max(2, Math.round(n / 2) * 2);
     const topHeight = evenRound(topBox.height);
     const botHeight = evenRound(botBox.height);
 
     return {
-      topPath, botPath, ctlPath, ctrPath, cblPath, cbrPath, tmp,
+      topPath, botPath, tmp,
       topHeight, botHeight, bgColor: t.bg,
     };
   } finally {
@@ -207,7 +198,8 @@ app.post('/api/tweet', async (req, res) => {
 });
 
 app.post('/api/render-video/start', async (req, res) => {
-  const { tweetUrl, theme = 'dark', width = 1080, overrides = {} } = req.body;
+  // Default to 720p width for ultra-fast encoding
+  const { tweetUrl, theme = 'dark', width = 720, overrides = {} } = req.body;
   const jobId = Date.now() + '_' + Math.random().toString(36).substring(2, 8);
 
   const job = {
@@ -243,39 +235,30 @@ app.post('/api/render-video/start', async (req, res) => {
       job.progress = 25;
       notifyClients(job);
 
-      // Width of video inset after subtracting left/right side padding
       const vidWidth = width - (SIDE_PAD * 2);
+      const topContentHeight = topHeight - CORNER_R;
+      const botContentHeight = botHeight - CORNER_R;
 
+      // Streamlining to 3 inputs & 2 overlays + direct audio stream copy
       const args = [
         '-y',
         '-progress', 'pipe:1',
         '-i', videoDetails.url,
         '-loop', '1', '-i', overlays.topPath,
         '-loop', '1', '-i', overlays.botPath,
-        '-loop', '1', '-i', overlays.ctlPath,
-        '-loop', '1', '-i', overlays.ctrPath,
-        '-loop', '1', '-i', overlays.cblPath,
-        '-loop', '1', '-i', overlays.cbrPath,
         '-filter_complex',
-        `[0:v]scale=${vidWidth}:-2,fps=30[vid];` +
-        `[1:v]scale=${width}:${topHeight},fps=30[top];` +
-        `[2:v]scale=${width}:${botHeight},fps=30[bot];` +
-        `[3:v]scale=${CORNER_R}:${CORNER_R}[ctl];` +
-        `[4:v]scale=${CORNER_R}:${CORNER_R}[ctr];` +
-        `[5:v]scale=${CORNER_R}:${CORNER_R}[cbl];` +
-        `[6:v]scale=${CORNER_R}:${CORNER_R}[cbr];` +
-        `[vid]pad=${width}:ih+${topHeight}+${botHeight}:${SIDE_PAD}:${topHeight}:color=${bgColor}[padded];` +
-        `[padded][top]overlay=0:0[s1];` +
-        `[s1][bot]overlay=0:main_h-overlay_h[s2];` +
-        `[s2][ctl]overlay=${SIDE_PAD}:${topHeight}[s3];` +
-        `[s3][ctr]overlay=${width - SIDE_PAD - CORNER_R}:${topHeight}[s4];` +
-        `[s4][cbl]overlay=${SIDE_PAD}:main_h-${botHeight}-${CORNER_R}[s5];` +
-        `[s5][cbr]overlay=${width - SIDE_PAD - CORNER_R}:main_h-${botHeight}-${CORNER_R}[outv]`,
+        `[0:v]scale=${vidWidth}:-2[vid];` +
+        `[vid]pad=${width}:ih+${topContentHeight}+${botContentHeight}:${SIDE_PAD}:${topContentHeight}:color=${bgColor}[padded];` +
+        `[padded][1:v]overlay=0:0[s1];` +
+        `[s1][2:v]overlay=0:main_h-overlay_h[outv]`,
         '-map', '[outv]',
         '-map', '0:a?',
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-        '-c:a', 'aac', '-pix_fmt', 'yuv420p',
-        '-threads', '1',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-crf', '26',
+        '-c:a', 'copy',
+        '-threads', '0',
         '-shortest',
         outPath,
       ];
