@@ -101,11 +101,21 @@ async function renderOverlays(tweet, theme, outWidth) {
     const botPath = path.join(tmp, 'bot.png');
 
     const topEl = await page.$('#top-block');
+    const topBox = await topEl.boundingBox();
     await topEl.screenshot({ path: topPath });
     const botEl = await page.$('#bottom-block');
+    const botBox = await botEl.boundingBox();
     await botEl.screenshot({ path: botPath });
 
-    return { topPath, botPath, tmp };
+    // boundingBox() returns CSS pixels (not multiplied by deviceScaleFactor).
+    // Since the viewport width equals outWidth, scaling the (2x-resolution)
+    // screenshot back down to outWidth naturally lands on these CSS heights.
+    // Round to even numbers since libx264 requires even output dimensions.
+    const evenRound = (n) => Math.max(2, Math.round(n / 2) * 2);
+    const topHeight = evenRound(topBox.height);
+    const botHeight = evenRound(botBox.height);
+
+    return { topPath, botPath, tmp, topHeight, botHeight };
   } finally {
     await browser.close();
   }
@@ -150,13 +160,20 @@ app.post('/api/render-video', async (req, res) => {
     tmp = overlays.tmp;
     const outPath = path.join(tmp, 'out.mp4');
 
+    const { topHeight, botHeight } = overlays;
+
     const args = [
       '-y',
       '-i', videoUrl,
       '-loop', '1', '-i', overlays.topPath,
       '-loop', '1', '-i', overlays.botPath,
       '-filter_complex',
-      `[0:v]scale=${width}:-2,fps=30[vid];[1:v]scale=${width}:-1,fps=30[top];[2:v]scale=${width}:-1,fps=30[bot];[top][vid][bot]vstack=3[outv]`,
+      `[0:v]scale=${width}:-2,fps=30[vid];` +
+      `[1:v]scale=${width}:${topHeight},fps=30[top];` +
+      `[2:v]scale=${width}:${botHeight},fps=30[bot];` +
+      `[vid]pad=${width}:ih+${topHeight}+${botHeight}:0:${topHeight}:color=black[padded];` +
+      `[padded][top]overlay=0:0[tmp1];` +
+      `[tmp1][bot]overlay=0:main_h-overlay_h[outv]`,
       '-map', '[outv]',
       '-map', '0:a?',
       '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
