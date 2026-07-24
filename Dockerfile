@@ -7,12 +7,14 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY package*.json ./
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-RUN npm install --omit=dev
-
-COPY . .
+RUN chown -R pptruser:pptruser /app
 
 USER pptruser
+RUN npm install --omit=dev \
+    && npx puppeteer browsers install chrome
+
+COPY --chown=pptruser:pptruser . .
+
 ENV PORT=3000
 EXPOSE 3000
 CMD ["node", "server.js"]
