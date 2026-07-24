@@ -1,0 +1,24 @@
+{
+  "name": "tweet-video-container",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  "containers": [
+    {
+      "class_name": "TweetVideoContainer",
+      "image": "../Dockerfile",
+      "instance_type": "standard-2",
+      "autoscaling": {
+        "minimum_instances": 1,
+        "cpu_target": 75
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "TWEET_CONTAINER", "class_name": "TweetVideoContainer" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_classes": ["TweetVideoContainer"] }
+  ]
+}
