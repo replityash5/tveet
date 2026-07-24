@@ -42,6 +42,12 @@
 <script>
 const $ = id => document.getElementById(id);
 
+// If this page is being served from the render server itself (recommended),
+// auto-fill the Server URL field so there's nothing to paste.
+if (location.protocol.startsWith('http')) {
+  $('apiBase').value = location.origin;
+}
+
 $('genBtn').addEventListener('click', async () => {
   const base = $('apiBase').value.trim().replace(/\/$/, '');
   const tweetUrl = $('tweetUrl').value.trim();
