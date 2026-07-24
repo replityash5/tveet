@@ -12,6 +12,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Serve the frontend directly from this server (same-origin — avoids
+// file:// / content:// CORS and network-request restrictions in mobile browsers).
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public-frontend.html'));
+});
+
 // ---- Tweet fetching (server-side = no CORS problems at all) ----
 function getToken(id) {
   return ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '');
@@ -107,10 +113,6 @@ async function renderOverlays(tweet, theme, outWidth) {
     const botBox = await botEl.boundingBox();
     await botEl.screenshot({ path: botPath });
 
-    // boundingBox() returns CSS pixels (not multiplied by deviceScaleFactor).
-    // Since the viewport width equals outWidth, scaling the (2x-resolution)
-    // screenshot back down to outWidth naturally lands on these CSS heights.
-    // Round to even numbers since libx264 requires even output dimensions.
     const evenRound = (n) => Math.max(2, Math.round(n / 2) * 2);
     const topHeight = evenRound(topBox.height);
     const botHeight = evenRound(botBox.height);
@@ -136,7 +138,6 @@ function runFfmpeg(args) {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-// Lets the front-end auto-fill fields without hitting CORS issues.
 app.post('/api/tweet', async (req, res) => {
   try {
     const data = await fetchTweetData(req.body.url);
