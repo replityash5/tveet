@@ -12,17 +12,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serving frontend directly from the server
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public-frontend.html'));
 });
 
-const CORNER_R = 28;
+// Increased to 40px for proper proportion on 1080p wide videos
+const CORNER_R = 40;
 
-// In-Memory Job Store for progress tracking
 const jobs = new Map();
 
-// Periodic cleanup of stale jobs (>30 minutes old)
 setInterval(() => {
   const now = Date.now();
   for (const [id, job] of jobs.entries()) {
@@ -76,7 +74,7 @@ function escapeHtml(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace/>/g, '&gt;');
 }
 
 function formatCompact(n) {
@@ -150,7 +148,6 @@ async function renderOverlays(tweet, theme, outWidth, overrides = {}) {
     const botBox = await botEl.boundingBox();
     await botEl.screenshot({ path: botPath, omitBackground: true });
 
-    // OmitBackground preserves alpha channels for rounded corner cutouts
     await (await page.$('#corner-tl')).screenshot({ path: ctlPath, omitBackground: true });
     await (await page.$('#corner-tr')).screenshot({ path: ctrPath, omitBackground: true });
     await (await page.$('#corner-bl')).screenshot({ path: cblPath, omitBackground: true });
@@ -208,7 +205,6 @@ app.post('/api/tweet', async (req, res) => {
   }
 });
 
-// Start background rendering job
 app.post('/api/render-video/start', async (req, res) => {
   const { tweetUrl, theme = 'dark', width = 1080, overrides = {} } = req.body;
   const jobId = Date.now() + '_' + Math.random().toString(36).substring(2, 8);
@@ -225,10 +221,8 @@ app.post('/api/render-video/start', async (req, res) => {
   };
   jobs.set(jobId, job);
 
-  // Return jobId immediately
   res.json({ jobId });
 
-  // Run rendering process asynchronously
   (async () => {
     try {
       const tweet = await fetchTweetData(tweetUrl);
@@ -270,9 +264,9 @@ app.post('/api/render-video/start', async (req, res) => {
         `[padded][top]overlay=0:0[s1];` +
         `[s1][bot]overlay=0:main_h-overlay_h[s2];` +
         `[s2][ctl]overlay=0:${topHeight}[s3];` +
-        `[s3][ctr]overlay=W-w:${topHeight}[s4];` +
-        `[s4][cbl]overlay=0:H-${botHeight}-h[s5];` +
-        `[s5][cbr]overlay=W-w:H-${botHeight}-h[outv]`,
+        `[s3][ctr]overlay=main_w-overlay_w:${topHeight}[s4];` +
+        `[s4][cbl]overlay=0:main_h-${botHeight}-overlay_h[s5];` +
+        `[s5][cbr]overlay=main_w-overlay_w:main_h-${botHeight}-overlay_h[outv]`,
         '-map', '[outv]',
         '-map', '0:a?',
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
@@ -283,7 +277,6 @@ app.post('/api/render-video/start', async (req, res) => {
       ];
 
       await runFfmpegWithProgress(args, videoDetails.durationMs, (pct) => {
-        // Scaling progress between 25% and 98%
         job.progress = Math.min(98, 25 + Math.round((pct * 73) / 100));
         notifyClients(job);
       });
@@ -301,13 +294,11 @@ app.post('/api/render-video/start', async (req, res) => {
   })();
 });
 
-// Helper function to push updates via SSE
 function notifyClients(job) {
   const data = JSON.stringify({ status: job.status, progress: job.progress, error: job.error });
   job.clients.forEach(res => res.write(`data: ${data}\n\n`));
 }
 
-// Server-Sent Events (SSE) Progress Route
 app.get('/api/render-video/progress/:jobId', (req, res) => {
   const { jobId } = req.params;
   const job = jobs.get(jobId);
@@ -320,7 +311,6 @@ app.get('/api/render-video/progress/:jobId', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  // Send current status immediately upon connection
   res.write(`data: ${JSON.stringify({ status: job.status, progress: job.progress, error: job.error })}\n\n`);
 
   job.clients.push(res);
@@ -330,7 +320,6 @@ app.get('/api/render-video/progress/:jobId', (req, res) => {
   });
 });
 
-// File Download Endpoint
 app.get('/api/render-video/download/:jobId', (req, res) => {
   const { jobId } = req.params;
   const job = jobs.get(jobId);
